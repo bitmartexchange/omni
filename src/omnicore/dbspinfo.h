@@ -84,6 +84,10 @@ public:
         //   txid -> granted amount, revoked amount
         std::map<uint256, std::vector<int64_t> > historicalData;
 
+        // Historical issuers:
+        //   (block, idx) -> issuer
+        std::map<std::pair<int, int>, std::string > historicalIssuers;
+
         Entry();
 
         ADD_SERIALIZE_METHODS;
@@ -114,14 +118,21 @@ public:
             READWRITE(fixed);
             READWRITE(manual);
             READWRITE(historicalData);
+            READWRITE(historicalIssuers);
         }
 
         bool isDivisible() const;
         void print() const;
+
+        /** Stores a new issuer in the DB. */
+        void updateIssuer(int block, int idx, const std::string& newIssuer);
+
+        /** Returns the issuer for the given block. */
+        std::string getIssuer(int block) const;
     };
 
 private:
-    // implied version of OMNI and TOMNI so they don't hit the leveldb
+    // implied version of OMN and TOMN so they don't hit the leveldb
     Entry implied_omni;
     Entry implied_tomni;
 

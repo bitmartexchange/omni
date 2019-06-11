@@ -110,7 +110,7 @@ bool autoCommit = true;
 int64_t exodus_prev = 0;
 
 //! Path for file based persistence
-boost::filesystem::path MPPersistencePath;
+boost::filesystem::path pathStateFiles;
 
 //! Flag to indicate whether Omni Core was initialized
 static int mastercoreInitialized = 0;
@@ -121,19 +121,19 @@ static int reorgRecoveryMode = 0;
 static int reorgRecoveryMaxHeight = 0;
 
 //! LevelDB based storage for currencies, smart properties and tokens
-CMPSPInfo* mastercore::_my_sps;
+CMPSPInfo* mastercore::pDbSpInfo;
 //! LevelDB based storage for transactions, with txid as key and validity bit, and other data as value
-CMPTxList* mastercore::p_txlistdb;
+CMPTxList* mastercore::pDbTransactionList;
 //! LevelDB based storage for the MetaDEx trade history
-CMPTradeList* mastercore::t_tradelistdb;
+CMPTradeList* mastercore::pDbTradeList;
 //! LevelDB based storage for STO recipients
-CMPSTOList* mastercore::s_stolistdb;
+CMPSTOList* mastercore::pDbStoList;
 //! LevelDB based storage for storing Omni transaction validation and position in block data
-COmniTransactionDB* mastercore::p_OmniTXDB;
+COmniTransactionDB* mastercore::pDbTransaction;
 //! LevelDB based storage for the MetaDEx fee cache
-COmniFeeCache* mastercore::p_feecache;
+COmniFeeCache* mastercore::pDbFeeCache;
 //! LevelDB based storage for the MetaDEx fee distributions
-COmniFeeHistory* mastercore::p_feehistory;
+COmniFeeHistory* mastercore::pDbFeeHistory;
 
 //! In-memory collection of DEx offers
 OfferMap mastercore::my_offers;
@@ -170,9 +170,9 @@ std::string mastercore::strMPProperty(uint32_t propertyId)
         switch (propertyId) {
             case OMNI_PROPERTY_BTC: str = "BTC";
                 break;
-            case OMNI_PROPERTY_MSC: str = "OMNI";
+            case OMNI_PROPERTY_MSC: str = "OMN";
                 break;
-            case OMNI_PROPERTY_TMSC: str = "TOMNI";
+            case OMNI_PROPERTY_TMSC: str = "TOMN";
                 break;
             default:
                 str = strprintf("SP token: %d", propertyId);
@@ -439,7 +439,7 @@ int64_t mastercore::getTotalTokens(uint32_t propertyId, int64_t* n_owners_total)
     LOCK(cs_tally);
 
     CMPSPInfo::Entry property;
-    if (false == _my_sps->getSP(propertyId, property)) {
+    if (false == pDbSpInfo->getSP(propertyId, property)) {
         return 0; // property ID does not exist
     }
 
@@ -457,7 +457,7 @@ int64_t mastercore::getTotalTokens(uint32_t propertyId, int64_t* n_owners_total)
                 owners++;
             }
         }
-        int64_t cachedFee = p_feecache->GetCachedAmount(propertyId);
+        int64_t cachedFee = pDbFeeCache->GetCachedAmount(propertyId);
         totalTokens += cachedFee;
     }
 
@@ -581,17 +581,17 @@ static int64_t calculate_and_update_devmsc(unsigned int nTime, int block)
 uint32_t mastercore::GetNextPropertyId(bool maineco)
 {
     if (maineco) {
-        return _my_sps->peekNextSPID(1);
+        return pDbSpInfo->peekNextSPID(1);
     } else {
-        return _my_sps->peekNextSPID(2);
+        return pDbSpInfo->peekNextSPID(2);
     }
 }
 
 // Perform any actions that need to be taken when the total number of tokens for a property ID changes
 void NotifyTotalTokensChanged(uint32_t propertyId, int block)
 {
-    p_feecache->UpdateDistributionThresholds(propertyId);
-    p_feecache->EvalCache(propertyId, block);
+    pDbFeeCache->UpdateDistributionThresholds(propertyId);
+    pDbFeeCache->EvalCache(propertyId, block);
 }
 
 void CheckWalletUpdate(bool forceUpdate)
@@ -675,6 +675,74 @@ static bool TXExodusFundraiser(const CTransaction& tx, const std::string& sender
     }
 
     return false;
+}
+
+//! Cache for potential Omni Layer transactions
+static std::set<uint256> setMarkerCache;
+
+//! Guards marker cache
+static CCriticalSection cs_marker_cache;
+
+/**
+ * Checks, if transaction has any Omni marker.
+ *
+ * Note: this may include invalid or malformed Omni Layer transactions!
+ *
+ * MUST NOT BE USED FOR CONSENSUS CRITICAL STUFF!
+ */
+static bool HasMarkerUnsafe(const CTransaction& tx)
+{
+    const std::string strClassC("6f6d6e69");
+    const std::string strClassAB("76a914946cb2e08075bcbaf157e47bcb67eb2b2339d24288ac");
+    const std::string strClassABTest("76a914643ce12b1590633077b8620316f43a9362ef18e588ac");
+    const std::string strClassMoney("76a9145ab93563a289b74c355a9b9258b86f12bb84affb88ac");
+
+    for (unsigned int n = 0; n < tx.vout.size(); ++n) {
+        const CTxOut& out = tx.vout[n];
+        std::string str = HexStr(out.scriptPubKey.begin(), out.scriptPubKey.end());
+
+        if (str.find(strClassC) != std::string::npos) {
+            return true;
+        }
+
+        if (MainNet()) {
+            if (str == strClassAB) {
+                return true;
+            }
+        } else {
+            if (str == strClassABTest) {
+                return true;
+            }
+            if (str == strClassMoney) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+/** Scans for marker and if one is found, add transaction to marker cache. */
+void TryToAddToMarkerCache(const CTransaction& tx)
+{
+    if (HasMarkerUnsafe(tx)) {
+        LOCK(cs_marker_cache);
+        setMarkerCache.insert(tx.GetHash());
+    }
+}
+
+/** Removes transaction from marker cache. */
+void RemoveFromMarkerCache(const CTransaction& tx)
+{
+    LOCK(cs_marker_cache);
+    setMarkerCache.erase(tx.GetHash());
+}
+
+/** Checks, if transaction is in marker cache. */
+bool IsInMarkerCache(const uint256& txHash)
+{
+    LOCK(cs_marker_cache);
+    return (setMarkerCache.find(txHash) != setMarkerCache.end());
 }
 
 /**
@@ -1507,6 +1575,7 @@ static int msc_initial_scan(int nFirstBlock)
  */
 void clear_all_state()
 {
+    PrintToLog("Clearing all state..\n");
     LOCK2(cs_tally, cs_pending);
 
     // Memory based storage
@@ -1522,28 +1591,28 @@ void clear_all_state()
     ClearFreezeState();
 
     // LevelDB based storage
-    _my_sps->Clear();
-    p_txlistdb->Clear();
-    s_stolistdb->Clear();
-    t_tradelistdb->Clear();
-    p_OmniTXDB->Clear();
-    p_feecache->Clear();
-    p_feehistory->Clear();
-    assert(p_txlistdb->setDBVersion() == DB_VERSION); // new set of databases, set DB version
+    pDbSpInfo->Clear();
+    pDbTransactionList->Clear();
+    pDbStoList->Clear();
+    pDbTradeList->Clear();
+    pDbTransaction->Clear();
+    pDbFeeCache->Clear();
+    pDbFeeHistory->Clear();
+    assert(pDbTransactionList->setDBVersion() == DB_VERSION); // new set of databases, set DB version
     exodus_prev = 0;
 }
 
 void RewindDBsAndState(int nHeight, int nBlockPrev = 0, bool fInitialParse = false)
 {
     // Check if any freeze related transactions would be rolled back - if so wipe the state and startclean
-    bool reorgContainsFreeze = p_txlistdb->CheckForFreezeTxs(nHeight);
+    bool reorgContainsFreeze = pDbTransactionList->CheckForFreezeTxs(nHeight);
 
     // NOTE: The blockNum parameter is inclusive, so deleteAboveBlock(1000) will delete records in block 1000 and above.
-    p_txlistdb->isMPinBlockRange(nHeight, reorgRecoveryMaxHeight, true);
-    t_tradelistdb->deleteAboveBlock(nHeight);
-    s_stolistdb->deleteAboveBlock(nHeight);
-    p_feecache->RollBackCache(nHeight);
-    p_feehistory->RollBackHistory(nHeight);
+    pDbTransactionList->isMPinBlockRange(nHeight, reorgRecoveryMaxHeight, true);
+    pDbTradeList->deleteAboveBlock(nHeight);
+    pDbStoList->deleteAboveBlock(nHeight);
+    pDbFeeCache->RollBackCache(nHeight);
+    pDbFeeHistory->RollBackHistory(nHeight);
     reorgRecoveryMaxHeight = 0;
 
     nWaterlineBlock = ConsensusParams().GENESIS_BLOCK - 1;
@@ -1634,18 +1703,18 @@ int mastercore_init()
         }
     }
 
-    t_tradelistdb = new CMPTradeList(GetDataDir() / "MP_tradelist", fReindex);
-    s_stolistdb = new CMPSTOList(GetDataDir() / "MP_stolist", fReindex);
-    p_txlistdb = new CMPTxList(GetDataDir() / "MP_txlist", fReindex);
-    _my_sps = new CMPSPInfo(GetDataDir() / "MP_spinfo", fReindex);
-    p_OmniTXDB = new COmniTransactionDB(GetDataDir() / "Omni_TXDB", fReindex);
-    p_feecache = new COmniFeeCache(GetDataDir() / "OMNI_feecache", fReindex);
-    p_feehistory = new COmniFeeHistory(GetDataDir() / "OMNI_feehistory", fReindex);
+    pDbTradeList = new CMPTradeList(GetDataDir() / "MP_tradelist", fReindex);
+    pDbStoList = new CMPSTOList(GetDataDir() / "MP_stolist", fReindex);
+    pDbTransactionList = new CMPTxList(GetDataDir() / "MP_txlist", fReindex);
+    pDbSpInfo = new CMPSPInfo(GetDataDir() / "MP_spinfo", fReindex);
+    pDbTransaction = new COmniTransactionDB(GetDataDir() / "Omni_TXDB", fReindex);
+    pDbFeeCache = new COmniFeeCache(GetDataDir() / "OMNI_feecache", fReindex);
+    pDbFeeHistory = new COmniFeeHistory(GetDataDir() / "OMNI_feehistory", fReindex);
 
-    MPPersistencePath = GetDataDir() / "MP_persist";
-    TryCreateDirectory(MPPersistencePath);
+    pathStateFiles = GetDataDir() / "MP_persist";
+    TryCreateDirectory(pathStateFiles);
 
-    bool wrongDBVersion = (p_txlistdb->getDBVersion() != DB_VERSION);
+    bool wrongDBVersion = (pDbTransactionList->getDBVersion() != DB_VERSION);
 
     ++mastercoreInitialized;
 
@@ -1658,8 +1727,14 @@ int mastercore_init()
     bool noPreviousState = (nWaterlineBlock <= 0);
 
     if (startClean) {
-        assert(p_txlistdb->setDBVersion() == DB_VERSION); // new set of databases, set DB version
+        assert(pDbTransactionList->setDBVersion() == DB_VERSION); // new set of databases, set DB version
     } else if (wrongDBVersion) {
+        nWaterlineBlock = -1; // force a clear_all_state and parse from start
+    }
+
+    // consistency check
+    bool inconsistentDb = !VerifyTransactionExistence(nWaterlineBlock);
+    if (inconsistentDb) {
         nWaterlineBlock = -1; // force a clear_all_state and parse from start
     }
 
@@ -1670,12 +1745,24 @@ int mastercore_init()
         if (wrongDBVersion) strReason = "client version changed";
         if (noPreviousState) strReason = "no usable previous state found";
         if (startClean) strReason = "-startclean parameter used";
+        if (inconsistentDb) strReason = "INCONSISTENT DB DETECTED!\n"
+                "\n!!! WARNING !!!\n\n"
+                "IF YOU ARE USING AN OVERLAY DB, YOU MAY NEED TO REPROCESS\n"
+                "ALL OMNI LAYER TRANSACTIONS TO AVOID INCONSISTENCIES!\n"
+                "\n!!! WARNING !!!";
         PrintToConsole("Loading persistent state: NONE (%s)\n", strReason);
     }
 
     if (nWaterlineBlock < 0) {
         // persistence says we reparse!, nuke some stuff in case the partial loads left stale bits
         clear_all_state();
+    }
+
+    if (inconsistentDb) {
+        std::string strAlert("INCONSISTENT DB DETECTED! IF YOU ARE USING AN OVERLAY DB, YOU MAY NEED TO REPROCESS"
+                "ALL OMNI LAYER TRANSACTIONS TO AVOID INCONSISTENCIES!");
+        AddAlert("omnicore", ALERT_CLIENT_VERSION_EXPIRY, std::numeric_limits<uint32_t>::max(), strAlert);
+        AlertNotify(strAlert);
     }
 
     // legacy code, setting to pre-genesis-block
@@ -1697,13 +1784,13 @@ int mastercore_init()
     }
 
     // load feature activation messages from txlistdb and process them accordingly
-    p_txlistdb->LoadActivations(nWaterlineBlock);
+    pDbTransactionList->LoadActivations(nWaterlineBlock);
 
     // load all alerts from levelDB (and immediately expire old ones)
-    p_txlistdb->LoadAlerts(nWaterlineBlock);
+    pDbTransactionList->LoadAlerts(nWaterlineBlock);
 
     // load the state of any freeable properties and frozen addresses from levelDB
-    if (!p_txlistdb->LoadFreezeState(nWaterlineBlock)) {
+    if (!pDbTransactionList->LoadFreezeState(nWaterlineBlock)) {
         std::string strShutdownReason = "Failed to load freeze state from levelDB.  It is unsafe to continue.\n";
         PrintToLog(strShutdownReason);
         if (!GetBoolArg("-overrideforcedshutdown", false)) {
@@ -1735,33 +1822,33 @@ int mastercore_shutdown()
 {
     LOCK(cs_tally);
 
-    if (p_txlistdb) {
-        delete p_txlistdb;
-        p_txlistdb = NULL;
+    if (pDbTransactionList) {
+        delete pDbTransactionList;
+        pDbTransactionList = NULL;
     }
-    if (t_tradelistdb) {
-        delete t_tradelistdb;
-        t_tradelistdb = NULL;
+    if (pDbTradeList) {
+        delete pDbTradeList;
+        pDbTradeList = NULL;
     }
-    if (s_stolistdb) {
-        delete s_stolistdb;
-        s_stolistdb = NULL;
+    if (pDbStoList) {
+        delete pDbStoList;
+        pDbStoList = NULL;
     }
-    if (_my_sps) {
-        delete _my_sps;
-        _my_sps = NULL;
+    if (pDbSpInfo) {
+        delete pDbSpInfo;
+        pDbSpInfo = NULL;
     }
-    if (p_OmniTXDB) {
-        delete p_OmniTXDB;
-        p_OmniTXDB = NULL;
+    if (pDbTransaction) {
+        delete pDbTransaction;
+        pDbTransaction = NULL;
     }
-    if (p_feecache) {
-        delete p_feecache;
-        p_feecache = NULL;
+    if (pDbFeeCache) {
+        delete pDbFeeCache;
+        pDbFeeCache = NULL;
     }
-    if (p_feehistory) {
-        delete p_feehistory;
-        p_feehistory = NULL;
+    if (pDbFeeHistory) {
+        delete pDbFeeHistory;
+        pDbFeeHistory = NULL;
     }
 
     mastercoreInitialized = 0;
@@ -1829,8 +1916,8 @@ bool mastercore_handler_tx(const CTransaction& tx, int nBlock, unsigned int idx,
         // PKT_ERROR - 2 = interpret_Transaction failed, structurally invalid payload
         if (interp_ret != PKT_ERROR - 2) {
             bool bValid = (0 <= interp_ret);
-            p_txlistdb->recordTX(tx.GetHash(), bValid, nBlock, mp_obj.getType(), mp_obj.getNewAmount());
-            p_OmniTXDB->RecordTransaction(tx.GetHash(), idx, interp_ret);
+            pDbTransactionList->recordTX(tx.GetHash(), bValid, nBlock, mp_obj.getType(), mp_obj.getNewAmount());
+            pDbTransaction->RecordTransaction(tx.GetHash(), idx, interp_ret);
         }
         fFoundTx |= (interp_ret == 0);
     }

@@ -42,7 +42,7 @@ using mastercore::CheckLiveActivations;
 using mastercore::DeleteAlerts;
 using mastercore::GetBlockIndex;
 using mastercore::isNonMainNet;
-using mastercore::p_OmniTXDB;
+using mastercore::pDbTransaction;
 
 CMPTxList::CMPTxList(const boost::filesystem::path& path, bool fWipe)
 {
@@ -164,6 +164,7 @@ void CMPTxList::recordMetaDExCancelTX(const uint256& txidMaster, const uint256& 
     status = pdb->Put(writeoptions, subKey, subValue);
     if (msc_debug_txdb) PrintToLog("%s(): store: %s=%s, status: %s\n", __func__, subKey, subValue, status.ToString());
 }
+
 
 /**
  * Records a "send all" sub record.
@@ -331,6 +332,34 @@ int CMPTxList::getMPTransactionCountBlock(int block)
             }
         }
     }
+    delete it;
+    return count;
+}
+
+/** Returns a list of all Omni transactions in the given block range. */
+int CMPTxList::GetOmniTxsInBlockRange(int blockFirst, int blockLast, std::set<uint256>& retTxs)
+{
+    int count = 0;
+    leveldb::Iterator* it = NewIterator();
+    
+    for (it->SeekToFirst(); it->Valid(); it->Next()) {
+        const leveldb::Slice& sKey = it->key();
+        const leveldb::Slice& sValue = it->value();
+
+        if (sKey.ToString().length() == 64) {
+            const std::string& strValue = sValue.ToString();
+            std::vector<std::string> vStr;
+            boost::split(vStr, strValue, boost::is_any_of(":"), boost::token_compress_on);
+            if (4 == vStr.size()) {
+                int blockCurrent = atoi(vStr[1]);
+                if (blockCurrent >= blockFirst && blockCurrent <= blockLast) {
+                    retTxs.insert(uint256S(sKey.ToString()));                    
+                    ++count;
+                }
+            }
+        }
+    }
+
     delete it;
     return count;
 }
@@ -635,7 +664,7 @@ bool CMPTxList::LoadFreezeState(int blockHeight)
                 txtype != MSC_TYPE_ENABLE_FREEZING && txtype != MSC_TYPE_DISABLE_FREEZING) continue;
         if (atoi(vstr[0]) != 1) continue; // invalid, ignore
         uint256 txid = uint256S(it->key().ToString());
-        int txPosition = p_OmniTXDB->FetchTransactionPosition(txid);
+        int txPosition = pDbTransaction->FetchTransactionPosition(txid);
         std::string sortKey = strprintf("%06d%010d", atoi(vstr[1]), txPosition);
         loadOrder.push_back(std::make_pair(sortKey, txid));
     }

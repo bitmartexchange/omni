@@ -46,6 +46,7 @@ All available commands can be listed with `"help"`, and information about a spec
   - [omni_gettransaction](#omni_gettransaction)
   - [omni_listtransactions](#omni_listtransactions)
   - [omni_listblocktransactions](#omni_listblocktransactions)
+  - [omni_listblockstransactions](#omni_listblockstransactions)
   - [omni_listpendingtransactions](#omni_listpendingtransactions)
   - [omni_getactivedexsells](#omni_getactivedexsells)
   - [omni_listproperties](#omni_listproperties)
@@ -144,7 +145,7 @@ Place, update or cancel a sell offer on the traditional distributed OMNI/BTC exc
 | Name                | Type    | Presence | Description                                                                                  |
 |---------------------|---------|----------|----------------------------------------------------------------------------------------------|
 | `fromaddress`       | string  | required | the address to send from                                                                     |
-| `propertyidforsale` | number  | required | the identifier of the tokens to list for sale (must be `1` for `OMNI` or `2`for `TOMNI`)     |
+| `propertyidforsale` | number  | required | the identifier of the tokens to list for sale (must be `1` for `OMN` or `2`for `TOMN`)       |
 | `amountforsale`     | string  | required | the amount of tokens to list for sale                                                        |
 | `amountdesired`     | string  | required | the amount of bitcoins desired                                                               |
 | `paymentwindow`     | number  | required | a time limit in blocks a buyer has to pay following a successful accepting order             |
@@ -702,11 +703,11 @@ All bitcoins from the sender are consumed and if there are bitcoins missing, the
 
 | Name                | Type    | Presence | Description                                                                                  |
 |---------------------|---------|----------|----------------------------------------------------------------------------------------------|
-| `fromaddress`       | string  | required | the address to send from                                                                     |
+| `fromaddress`       | string  | required | the address to send the tokens from                                                          |
 | `toaddress`         | string  | required | the address of the receiver                                                                  |
 | `propertyid`        | number  | required | the identifier of the tokens to send                                                         |
 | `amount`            | string  | required | the amount to send                                                                           |
-| `feeaddress`        | string  | required | the address that is used to pay for fees, if needed                                          |
+| `feeaddress`        | string  | required | the address that is used for change and to pay for fees, if needed                           |
 
 **Result:**
 ```js
@@ -733,10 +734,10 @@ All bitcoins from the sender are consumed and if there are bitcoins missing, the
 
 | Name                | Type    | Presence | Description                                                                                  |
 |---------------------|---------|----------|----------------------------------------------------------------------------------------------|
-| `fromaddress`       | string  | required | the address to send from                                                                     |
+| `fromaddress`       | string  | required | the address to send the tokens from                                                          |
 | `toaddress`         | string  | required | the address of the receiver                                                                  |
 | `ecosystem`         | number  | required | the ecosystem of the tokens to send (1 for main ecosystem, 2 for test ecosystem)             |
-| `feeaddress`        | string  | required | the address that is used to pay for fees, if needed                                          |
+| `feeaddress`        | string  | required | the address that is used for change and to pay for fees, if needed                           |
 
 **Result:**
 ```js
@@ -1067,6 +1068,35 @@ $ omnicore-cli "omni_listblocktransactions" 279007
 
 ---
 
+### omni_listblockstransactions
+
+Lists all Omni transactions in a given range of blocks.
+
+Note: the list of transactions is unordered and can contain invalid transactions!
+
+**Arguments:**
+
+| Name                | Type    | Presence | Description                                                                                  |
+|---------------------|---------|----------|----------------------------------------------------------------------------------------------|
+| `firstblock`        | number  | required | the index of the first block to consider                                                     |
+| `lastblock`         | number  | required | the index of the last block to consider                                                      |
+
+**Result:**
+```js
+[      // (array of string)
+  "hash",  // (string) the hash of the transaction
+  ...
+]
+```
+
+**Example:**
+
+```bash
+$ omnicore-cli "omni_omni_listblocktransactions" 279007 300000
+```
+
+---
+
 ### omni_listpendingtransactions
 
 Returns a list of unconfirmed Omni transactions, pending in the memory pool.
@@ -1378,7 +1408,7 @@ Get information and recipients of a send-to-owners transaction.
   "propertyid" : n,              // (number) the identifier of sent tokens
   "divisible" : true|false,      // (boolean) whether the sent tokens are divisible
   "amount" : "n.nnnnnnnn",       // (string) the number of tokens sent to owners
-  "totalstofee" : "n.nnnnnnnn",  // (string) the fee paid by the sender, nominated in OMNI or TOMNI
+  "totalstofee" : "n.nnnnnnnn",  // (string) the fee paid by the sender, nominated in OMN or TOMN
   "recipients": [                // (array of JSON objects) a list of recipients
     {
       "address" : "address",         // (string) the Bitcoin address of the recipient
@@ -2007,7 +2037,7 @@ Create a payload to place, update or cancel a sell offer on the traditional dist
 
 | Name                | Type    | Presence | Description                                                                                  |
 |---------------------|---------|----------|----------------------------------------------------------------------------------------------|
-| `propertyidforsale` | number  | required | the identifier of the tokens to list for sale (must be 1 for OMNI or 2 for TOMNI)            |
+| `propertyidforsale` | number  | required | the identifier of the tokens to list for sale (must be 1 for OMN or 2 for TOMN)              |
 | `amountforsale`     | string  | required | the amount of tokens to list for sale                                                        |
 | `amountdesired`     | string  | required | the amount of bitcoins desired                                                               |
 | `paymentwindow`     | number  | required | a time limit in blocks a buyer has to pay following a successful accepting order             |

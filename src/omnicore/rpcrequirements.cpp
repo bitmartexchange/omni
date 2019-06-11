@@ -30,7 +30,7 @@ void RequireBalance(const std::string& address, uint32_t propertyId, int64_t amo
 void RequirePrimaryToken(uint32_t propertyId)
 {
     if (propertyId < 1 || 2 < propertyId) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, "Property identifier must be 1 (OMNI) or 2 (TOMNI)");
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Property identifier must be 1 (OMN) or 2 (TOMN)");
     }
 }
 
@@ -67,7 +67,7 @@ void RequireCrowdsale(uint32_t propertyId)
 {
     LOCK(cs_tally);
     CMPSPInfo::Entry sp;
-    if (!mastercore::_my_sps->getSP(propertyId, sp)) {
+    if (!mastercore::pDbSpInfo->getSP(propertyId, sp)) {
         throw JSONRPCError(RPC_DATABASE_ERROR, "Failed to retrieve property");
     }
     if (sp.fixed || sp.manual) {
@@ -87,7 +87,7 @@ void RequireManagedProperty(uint32_t propertyId)
 {
     LOCK(cs_tally);
     CMPSPInfo::Entry sp;
-    if (!mastercore::_my_sps->getSP(propertyId, sp)) {
+    if (!mastercore::pDbSpInfo->getSP(propertyId, sp)) {
         throw JSONRPCError(RPC_DATABASE_ERROR, "Failed to retrieve property");
     }
     if (sp.fixed || !sp.manual) {
@@ -99,7 +99,7 @@ void RequireTokenIssuer(const std::string& address, uint32_t propertyId)
 {
     LOCK(cs_tally);
     CMPSPInfo::Entry sp;
-    if (!mastercore::_my_sps->getSP(propertyId, sp)) {
+    if (!mastercore::pDbSpInfo->getSP(propertyId, sp)) {
         throw JSONRPCError(RPC_DATABASE_ERROR, "Failed to retrieve property");
     }
     if (address != sp.issuer) {

@@ -30,7 +30,7 @@ int const STORE_EVERY_N_BLOCK = 10000;
 #define TEST_ECO_PROPERTY_1 (0x80000003UL)
 
 // increment this value to force a refresh of the state (similar to --startclean)
-#define DB_VERSION 6
+#define DB_VERSION 7
 
 // could probably also use: int64_t maxInt64 = std::numeric_limits<int64_t>::max();
 // maximum numeric values from the spec:
@@ -156,6 +156,13 @@ int mastercore_handler_disc_end(int nBlockNow, CBlockIndex const * pBlockIndex);
 int mastercore_handler_block_begin(int nBlockNow, CBlockIndex const * pBlockIndex);
 int mastercore_handler_block_end(int nBlockNow, CBlockIndex const * pBlockIndex, unsigned int);
 bool mastercore_handler_tx(const CTransaction& tx, int nBlock, unsigned int idx, const CBlockIndex* pBlockIndex);
+
+/** Scans for marker and if one is found, add transaction to marker cache. */
+void TryToAddToMarkerCache(const CTransaction& tx);
+/** Removes transaction from marker cache. */
+void RemoveFromMarkerCache(const CTransaction& tx);
+/** Checks, if transaction is in marker cache. */
+bool IsInMarkerCache(const uint256& txHash);
 
 /** Global handler to total wallet balances. */
 void CheckWalletUpdate(bool forceUpdate = false);
